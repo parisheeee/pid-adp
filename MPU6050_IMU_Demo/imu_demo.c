@@ -19,6 +19,7 @@
  *  - GPIO 9 ---> MPU6050 SCL
  *  - 3.3v ---> MPU6050 VCC
  *  - RP2040 GND ---> MPU6050 GND
+ *  - GPIO 4 ---> PWM output
  */
 
 
@@ -92,6 +93,55 @@ static struct pt_sem vga_semaphore ;
 #define CLKDIV  25.0
 uint slice_num ;
 
+// GPIO we're using for PWM
+#define PWM_OUT 4
+
+// PWM duty cycle
+volatile int control ;
+volatile int old_control ;
+
+// Set once the MPU6050 answers on the I2C bus. If it doesn't, the ISR
+// skips the I2C reads so core 0 isn't starved by timeouts.
+volatile bool imu_ok = false ;
+
+// Free the I2C bus and (re)initialize the I2C peripheral. If the Pico is
+// reset mid-transfer while the MPU6050 stays powered, the IMU can hold SDA
+// low forever. Clocking SCL until it lets go, then sending a STOP, frees it.
+void i2c_bus_recover() {
+    gpio_init(SDA_PIN) ;
+    gpio_init(SCL_PIN) ;
+    gpio_pull_up(SDA_PIN) ;
+    gpio_pull_up(SCL_PIN) ;
+    gpio_put(SDA_PIN, 0) ;
+    gpio_put(SCL_PIN, 0) ;
+    // Open-drain emulation: output = drive low, input = released (pulled high)
+    for (int i = 0; i < 9 && !gpio_get(SDA_PIN); i++) {
+        gpio_set_dir(SCL_PIN, GPIO_OUT) ; sleep_us(5) ;
+        gpio_set_dir(SCL_PIN, GPIO_IN) ;  sleep_us(5) ;
+    }
+    // STOP condition: SDA low->high while SCL is high
+    gpio_set_dir(SCL_PIN, GPIO_OUT) ; sleep_us(5) ;
+    gpio_set_dir(SDA_PIN, GPIO_OUT) ; sleep_us(5) ;
+    gpio_set_dir(SCL_PIN, GPIO_IN) ;  sleep_us(5) ;
+    gpio_set_dir(SDA_PIN, GPIO_IN) ;  sleep_us(5) ;
+
+    i2c_init(I2C_CHAN, I2C_BAUD_RATE) ;
+    gpio_set_function(SDA_PIN, GPIO_FUNC_I2C) ;
+    gpio_set_function(SCL_PIN, GPIO_FUNC_I2C) ;
+}
+
+// Check that the MPU6050 answers (WHO_AM_I register 0x75), and configure it if so
+bool imu_probe() {
+    uint8_t reg = 0x75 ;
+    uint8_t who = 0 ;
+    if (i2c_write_timeout_us(I2C_CHAN, ADDRESS, &reg, 1, true, 1000) == 1 &&
+        i2c_read_timeout_us(I2C_CHAN, ADDRESS, &who, 1, false, 1000) == 1) {
+        mpu6050_reset() ;
+        return true ;
+    }
+    return false ;
+}
+
 
 void drawAxes() {
     // Draw the static aspects of the display
@@ -138,11 +188,17 @@ void on_pwm_wrap() {
     pwm_clear_irq(pwm_gpio_to_slice_num(5));
     gpio_put(14, !gpio_get(14)) ;
 
+    // Update duty cycle
+    if (control!=old_control) {
+        old_control = control ;
+        pwm_set_chan_level(slice_num, PWM_CHAN_A, control);
+    }
+
     // Read the IMU
     // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
     // If you want these values in floating point, call fix2float15() on
     // the raw measurements.
-    mpu6050_read_raw(acceleration, gyro);
+    if (imu_ok) mpu6050_read_raw(acceleration, gyro);
 
     // Increment drawspeed controller
     throttle += 1 ;
@@ -188,6 +244,14 @@ static PT_THREAD (protothread_draw(struct pt *pt))
         clearLowFrame(0, BLACK) ;
         drawAxes() ;
 
+        // Show IMU status on screen so wiring problems are obvious
+        if (!imu_ok) {
+            setTextColor(RED) ;
+            setCursor(LEFT_EDGE + 10, 40) ;
+            sprintf(screentext, "IMU NOT DETECTED - check wiring") ;
+            writeString(screentext) ;
+        }
+
         // Plot data oldest-->newest
         start = head ;
         for (i = 0; i < PLOT_WIDTH; i++) {
@@ -210,31 +274,41 @@ static PT_THREAD (protothread_draw(struct pt *pt))
     PT_END(pt) ;
 }
 
-// User input thread. User can change draw speed
+// User input thread. User sets the PWM duty cycle
 static PT_THREAD (protothread_serial(struct pt *pt))
 {
     PT_BEGIN(pt) ;
-    static char classifier ;
     static int test_in ;
-    static float float_in ;
     while(1) {
-        sprintf(pt_serial_out_buffer, "input a command: ");
+        sprintf(pt_serial_out_buffer, "input a duty cycle (0-%d): ", WRAPVAL);
         serial_write ;
         // spawn a thread to do the non-blocking serial read
         serial_read ;
         // convert input string to number
-        sscanf(pt_serial_in_buffer,"%c", &classifier) ;
-
-        // num_independents = test_in ;
-        if (classifier=='t') {
-            sprintf(pt_serial_out_buffer, "timestep: ");
+        sscanf(pt_serial_in_buffer,"%d", &test_in) ;
+        if (test_in > WRAPVAL || test_in < 0) {
+            sprintf(pt_serial_out_buffer, "duty cycle must be between 0 and %d\n", WRAPVAL);
             serial_write ;
-            serial_read ;
-            // convert input string to number
-            sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-            if (test_in > 0) {
-                threshold = test_in ;
-            }
+        }
+        else {
+            control = test_in ;
+            sprintf(pt_serial_out_buffer, "duty cycle set to %d\n", control);
+            serial_write ;
+        }
+    }
+    PT_END(pt) ;
+}
+
+// If the IMU wasn't found (or was plugged in late), keep trying once a second.
+// Safe to touch I2C here: the ISR only uses I2C once imu_ok is set.
+static PT_THREAD (protothread_imu_retry(struct pt *pt))
+{
+    PT_BEGIN(pt) ;
+    while(1) {
+        PT_YIELD_usec(1000000) ;
+        if (!imu_ok) {
+            i2c_bus_recover() ;
+            imu_ok = imu_probe() ;
         }
     }
     PT_END(pt) ;
@@ -257,18 +331,37 @@ int main() {
     // Initialize stdio
     stdio_init_all();
 
+    printf("\nMPU6050 IMU demo booting\n") ;
+
     // Initialize VGA
     initVGA() ;
 
+    // Start core 1 (VGA drawing) right away, so the display comes up
+    // even if the IMU/I2C setup below has problems
+    multicore_reset_core1();
+    multicore_launch_core1(core1_entry);
+
+    // ISR debug pin (toggled in on_pwm_wrap)
+    gpio_init(14) ;
+    gpio_set_dir(14, GPIO_OUT) ;
+    gpio_put(14, 0) ;
+
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////// I2C CONFIGURATION ////////////////////////////
-    i2c_init(I2C_CHAN, I2C_BAUD_RATE) ;
-    gpio_set_function(SDA_PIN, GPIO_FUNC_I2C) ;
-    gpio_set_function(SCL_PIN, GPIO_FUNC_I2C) ;
+    // Free a possibly stuck bus, init I2C (internal pull-ups stay on as a
+    // fallback in case the breakout has none)
+    i2c_bus_recover() ;
 
     // MPU6050 initialization
-    mpu6050_reset();
-    mpu6050_read_raw(acceleration, gyro);
+    imu_ok = imu_probe() ;
+    if (imu_ok) {
+        printf("MPU6050 found\n") ;
+        mpu6050_read_raw(acceleration, gyro);
+    }
+    else {
+        printf("MPU6050 NOT found on SDA=GPIO%d, SCL=GPIO%d -- will keep retrying\n",
+               SDA_PIN, SCL_PIN) ;
+    }
 
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////// PWM CONFIGURATION ////////////////////////////
@@ -302,15 +395,9 @@ int main() {
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////////// ROCK AND ROLL ////////////////////////////
     ////////////////////////////////////////////////////////////////////////
-    // start core 1 
-    multicore_reset_core1();
-    multicore_launch_core1(core1_entry);
-
-    // start core 0
-    gpio_init(14) ;
-    gpio_set_dir(14, GPIO_OUT) ;
-    gpio_put(14, 0) ;
+    // start core 0 (core 1 was started right after initVGA)
     pt_add_thread(protothread_serial) ;
+    pt_add_thread(protothread_imu_retry) ;
     pt_schedule_start ;
 
 }
