@@ -12,27 +12,34 @@ void mpu6050_reset() {
     // There are a load more options to set up the device in
     // different ways that could be added here
     uint8_t buf[] = {0x6B, 0x00};
-    i2c_write_blocking(I2C_CHAN, ADDRESS, buf, 2, false);
+    i2c_write_timeout_us(I2C_CHAN, ADDRESS, buf, 2, false, 1000);
 
-    // Set gyro sample rate (set to 1KHz, same as accel)
-    uint8_t gyro_rate[] = {0x19, 0b00000111} ;
-    i2c_write_blocking(I2C_CHAN, ADDRESS, gyro_rate, 2, false);
+    // Enable the digital low pass filter (CONFIG register, DLPF_CFG = 3):
+    // accel ~44 Hz / gyro ~42 Hz bandwidth, ~5 ms delay. Cuts the noise
+    // that would otherwise alias when we decimate samples for display.
+    uint8_t dlpf_config[] = {0x1A, 0x03} ;
+    i2c_write_timeout_us(I2C_CHAN, ADDRESS, dlpf_config, 2, false, 1000);
+
+    // Set sample rate to 1KHz. With the DLPF on, the gyro output rate is
+    // 1 kHz (not 8 kHz), so the divider must be 0: rate = 1 kHz / (1 + 0)
+    uint8_t gyro_rate[] = {0x19, 0x00} ;
+    i2c_write_timeout_us(I2C_CHAN, ADDRESS, gyro_rate, 2, false, 1000);
 
     // Configure the Gyro range (+/- 250 deg/s)
     uint8_t gyro_settings[] = {0x1b, 0b00000000} ;
-    i2c_write_blocking(I2C_CHAN, ADDRESS, gyro_settings, 2, false);
+    i2c_write_timeout_us(I2C_CHAN, ADDRESS, gyro_settings, 2, false, 1000);
 
     // Configure the Accel range (+/- 2g's)
     uint8_t accel_settings[] = {0x1c, 0b00000000} ;
-    i2c_write_blocking(I2C_CHAN, ADDRESS, accel_settings, 2, false);
+    i2c_write_timeout_us(I2C_CHAN, ADDRESS, accel_settings, 2, false, 1000);
 
     // Configure interrupt pin
     uint8_t pin_settings[] = {0x37, 0b00010000} ;
-    i2c_write_blocking(I2C_CHAN, ADDRESS, pin_settings, 2, false);
+    i2c_write_timeout_us(I2C_CHAN, ADDRESS, pin_settings, 2, false, 1000);
 
     // Configure data ready interrupt
     uint8_t int_config[] = {0x38, 0x01} ;
-    i2c_write_blocking(I2C_CHAN, ADDRESS, int_config, 2, false);
+    i2c_write_timeout_us(I2C_CHAN, ADDRESS, int_config, 2, false, 1000);
 }
 
 void mpu6050_read_raw(fix15 accel[3], fix15 gyro[3]) {
