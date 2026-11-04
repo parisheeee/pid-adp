@@ -26,8 +26,8 @@
 // Include standard libraries
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
 #include <string.h>
+#include <math.h>
 // Include PICO libraries
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -50,18 +50,30 @@
 
 // Rescale the measurements for display
 #define OLD_RANGE 500.  // (+/- 250)
-#define NEW_RANGE 150.  // (looks nice on VGA)
+#define NEW_RANGE 75.  // Height of each raw-sensor plot
 #define OLD_MIN -250. 
 #define OLD_MAX 250. 
 #define ACCEL_SCALE 120.0
 
 // Place the plots
-#define TOP_PLOT_BOTTOM 230
-#define BOTTOM_PLOT_BOTTOM 430
+#define TOP_PLOT_BOTTOM 145
+#define BOTTOM_PLOT_BOTTOM 250
+#define ANGLE_PLOT_TOP 280
+#define ANGLE_PLOT_BOTTOM 355
+#define PWM_PLOT_TOP 385
+#define PWM_PLOT_BOTTOM 460
 #define PLOT_WIDTH 530
 
 // Arrays in which raw measurements will be stored
 fix15 acceleration[3], gyro[3];
+
+// Accelerometer tilt for rotation about the IMU Y axis.
+// Keep the arm fully down at startup: the first nonzero sample sets zero.
+// Reverse ANGLE_SIGN if lifting the arm gives negative angles.
+#define ANGLE_SIGN 1.0f
+static float angle_zero_deg = 0.0f;
+static bool angle_zero_set = false;
+volatile float beam_angle_deg = 0.0f;
 
 // Arrays for circular display buffer
 fix15 ax[PLOT_WIDTH] ;
@@ -70,6 +82,8 @@ fix15 az[PLOT_WIDTH] ;
 fix15 gx[PLOT_WIDTH] ;
 fix15 gy[PLOT_WIDTH] ;
 fix15 gz[PLOT_WIDTH] ;
+float angle_history[PLOT_WIDTH] ;
+int pwm_history[PLOT_WIDTH] ;
 
 // Pointer to head of buffer
 volatile int head = 0 ;
@@ -98,11 +112,22 @@ uint slice_num ;
 
 // PWM duty cycle
 volatile int control ;
-volatile int old_control ;
 
 // Set once the MPU6050 answers on the I2C bus. If it doesn't, the ISR
 // skips the I2C reads so core 0 isn't starved by timeouts.
 volatile bool imu_ok = false ;
+
+// PID Constants
+
+volatile float Kp = 0.0f;
+
+// Set to the measured PWM needed to hold the arm horizontal (90 degrees).
+// Zero leaves feedforward disabled until calibrated.
+#define HOVER_PWM 0.0f
+volatile float target_angle_deg = 0.0f;
+volatile float Ki = 0.0f;
+volatile float Kd = 0.0f;
+
 
 // Free the I2C bus and (re)initialize the I2C peripheral. If the Pico is
 // reset mid-transfer while the MPU6050 stays powered, the IMU can hold SDA
@@ -148,57 +173,83 @@ void drawAxes() {
     setTextSize(1) ;
     setTextColor(WHITE);
 
-    // Draw bottom plot
-    drawHLine(75, 430, 5, CYAN) ;
-    drawHLine(75, 355, 5, CYAN) ;
-    drawHLine(75, 280, 5, CYAN) ;
-    drawVLine(80, 280, 150, CYAN) ;
-    sprintf(screentext, "0") ;
-    setCursor(50, 350) ;
-    writeString(screentext) ;
-    sprintf(screentext, "+2") ;
-    setCursor(50, 280) ;
-    writeString(screentext) ;
-    sprintf(screentext, "-2") ;
-    setCursor(50, 425) ;
-    writeString(screentext) ;
-
-    // Draw top plot
-    drawHLine(75, 230, 5, CYAN) ;
-    drawHLine(75, 155, 5, CYAN) ;
-    drawHLine(75, 80, 5, CYAN) ;
-    drawVLine(80, 80, 150, CYAN) ;
-    sprintf(screentext, "0") ;
-    setCursor(50, 150) ;
-    writeString(screentext) ;
-    sprintf(screentext, "+250") ;
-    setCursor(45, 75) ;
-    writeString(screentext) ;
-    sprintf(screentext, "-250") ;
-    setCursor(45, 225) ;
-    writeString(screentext) ;
+    const int tops[4] = {70, 175, ANGLE_PLOT_TOP, PWM_PLOT_TOP};
+    const char *titles[4] = {"Gyro (deg/s)", "Filtered acceleration (g)",
+                             "Accel angle (deg), down = 0", "Motor PWM command"};
+    const char *upper[4] = {"+250", "+2.08", "+180", "6000"};
+    const char *middle[4] = {"0", "0", "90", "3000"};
+    const char *lower[4] = {"-250", "-2.08", "0", "0"};
+    for (int p = 0; p < 4; p++) {
+        int top = tops[p];
+        drawVLine(80, top, 76, CYAN);
+        drawHLine(75, top, 5, CYAN);
+        drawHLine(75, top + 38, 5, CYAN);
+        drawHLine(75, top + 75, 5, CYAN);
+        setCursor(LEFT_EDGE, top - 15); writeString((char *)titles[p]);
+        setCursor(40, top); writeString((char *)upper[p]);
+        setCursor(40, top + 34); writeString((char *)middle[p]);
+        setCursor(40, top + 67); writeString((char *)lower[p]);
+    }
 }
 
 volatile int throttle = 10 ;
 
+fix15 filtered_accel_x = 0;
+fix15 filtered_accel_y = 0;
+fix15 filtered_accel_z = 0;
+static bool accel_filter_initialized = false;
+
 // Interrupt service routine
 void on_pwm_wrap() {
-
     // Clear the interrupt flag that brought us here
     pwm_clear_irq(pwm_gpio_to_slice_num(5));
     gpio_put(14, !gpio_get(14)) ;
-
-    // Update duty cycle
-    if (control!=old_control) {
-        old_control = control ;
-        pwm_set_chan_level(slice_num, PWM_CHAN_A, control);
-    }
 
     // Read the IMU
     // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
     // If you want these values in floating point, call fix2float15() on
     // the raw measurements.
-    if (imu_ok) mpu6050_read_raw(acceleration, gyro);
+    if (imu_ok) {
+        mpu6050_read_raw(acceleration, gyro);
+        if (!accel_filter_initialized) {
+            filtered_accel_x = acceleration[0];
+            filtered_accel_y = acceleration[1];
+            filtered_accel_z = acceleration[2];
+            accel_filter_initialized = true;
+        }
+        // Low-pass: move 1/16 of the way toward each new sample.
+        filtered_accel_x += (acceleration[0] - filtered_accel_x) / 16;
+        filtered_accel_y += (acceleration[1] - filtered_accel_y) / 16;
+        filtered_accel_z += (acceleration[2] - filtered_accel_z) / 16;
+
+        float accel_x = fix2float15(filtered_accel_x);
+        float accel_z = fix2float15(filtered_accel_z);
+        if (accel_x != 0.0f || accel_z != 0.0f) {
+
+            float raw_angle = atan2f(accel_x, accel_z)
+                            * (180.0f / 3.14159265f);
+    
+            if (!angle_zero_set) {
+                angle_zero_deg = raw_angle;
+                angle_zero_set = true;
+            }
+
+            float relative_angle = raw_angle - angle_zero_deg;
+            // Wrap across atan2's -180/+180 boundary.
+            if (relative_angle > 180.0f) relative_angle -= 360.0f;
+            if (relative_angle < -180.0f) relative_angle += 360.0f;
+            beam_angle_deg = ANGLE_SIGN * relative_angle;
+        }
+    }
+
+    // Proportional correction around the estimated holding command.
+    float error = target_angle_deg - beam_angle_deg;
+    float output = Kp * error;
+    if (!imu_ok || !angle_zero_set) output = 0.0f;
+    if (output < 0.0f) output = 0.0f;
+    if (output > WRAPVAL) output = WRAPVAL;
+    control = (int)output;
+    pwm_set_chan_level(slice_num, PWM_CHAN_A, control);
 
     // Increment drawspeed controller
     throttle += 1 ;
@@ -207,15 +258,18 @@ void on_pwm_wrap() {
         // Zero drawspeed controller
         throttle = 0 ;
 
-        // Replace oldest data in accel arrays with new sample
-        ax[head] = acceleration[0] ;
-        ay[head] = acceleration[1] ;
-        az[head] = acceleration[2] ;
+        // Plot filtered acceleration using the same sample times as angle.
+        ax[head] = filtered_accel_x ;
+        ay[head] = filtered_accel_y ;
+        az[head] = filtered_accel_z ;
 
         // Replace oldest data in gyro arrays with new sample
         gx[head] = gyro[0] ;
         gy[head] = gyro[1] ;
         gz[head] = gyro[2] ;
+        angle_history[head] = beam_angle_deg;
+        // Store the clamped command actually written to the PWM hardware.
+        pwm_history[head] = control;
 
         // Move the pointer to the oldest data
         head = ((head+1) == PLOT_WIDTH) ? 0 : (head + 1) ;
@@ -252,6 +306,14 @@ static PT_THREAD (protothread_draw(struct pt *pt))
             writeString(screentext) ;
         }
 
+        else {
+            setTextColor(WHITE) ;
+            setCursor(LEFT_EDGE + 10, 40) ;
+            snprintf(screentext, sizeof(screentext), "Accel angle: %.1f deg",
+                     (double)beam_angle_deg) ;
+            writeString(screentext) ;
+        }
+
         // Plot data oldest-->newest
         start = head ;
         for (i = 0; i < PLOT_WIDTH; i++) {
@@ -267,6 +329,16 @@ static PT_THREAD (protothread_draw(struct pt *pt))
                 (int)(NEW_RANGE*((float)((fix2float15(gy[start]))-OLD_MIN)/OLD_RANGE))), RED) ;
             drawPixel(LEFT_EDGE + i, (TOP_PLOT_BOTTOM -
                 (int)(NEW_RANGE*((float)((fix2float15(gz[start]))-OLD_MIN)/OLD_RANGE))), GREEN) ;
+            // 0 degrees at bottom, 90 at center, 180 at top.
+            float angle = angle_history[start];
+            if (angle > 180.0f) angle = 180.0f;
+            if (angle < 0.0f) angle = 0.0f;
+            drawPixel(LEFT_EDGE + i, ANGLE_PLOT_BOTTOM -
+                      (int)(angle *
+                      (ANGLE_PLOT_BOTTOM - ANGLE_PLOT_TOP) / 180.0f), YELLOW);
+            drawPixel(LEFT_EDGE + i, PWM_PLOT_BOTTOM -
+                      pwm_history[start] * (PWM_PLOT_BOTTOM - PWM_PLOT_TOP)
+                      / WRAPVAL, CYAN);
             start = ((start+1)==PLOT_WIDTH) ? 0 : (start+1) ;
         }
     }
@@ -274,27 +346,74 @@ static PT_THREAD (protothread_draw(struct pt *pt))
     PT_END(pt) ;
 }
 
-// User input thread. User sets the PWM duty cycle
+
+// User input thread. User sets the target angle and proportional gain.
 static PT_THREAD (protothread_serial(struct pt *pt))
 {
     PT_BEGIN(pt) ;
     static int test_in ;
+    static float kp_in ;
+    static float kd_in ;
+    static float ki_in ;
+
     while(1) {
-        sprintf(pt_serial_out_buffer, "input a duty cycle (0-%d): ", WRAPVAL);
+        sprintf(pt_serial_out_buffer, "input a target angle: ");
         serial_write ;
         // spawn a thread to do the non-blocking serial read
         serial_read ;
         // convert input string to number
-        sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-        if (test_in > WRAPVAL || test_in < 0) {
-            sprintf(pt_serial_out_buffer, "duty cycle must be between 0 and %d\n", WRAPVAL);
+        if (sscanf(pt_serial_in_buffer,"%d", &test_in) != 1 ||
+            test_in > 180 || test_in < -180) {
+            sprintf(pt_serial_out_buffer, "target angle must be between -180 and 180\n");
             serial_write ;
         }
         else {
-            control = test_in ;
-            sprintf(pt_serial_out_buffer, "duty cycle set to %d\n", control);
+            target_angle_deg = test_in ;
+            sprintf(pt_serial_out_buffer, "target angle set to %d deg\n", test_in);
             serial_write ;
         }
+
+        //kp input
+        sprintf(pt_serial_out_buffer, "input a Kp value: ");
+        serial_write ;
+        serial_read ;
+        if (sscanf(pt_serial_in_buffer,"%f", &kp_in) == 1 &&
+            isfinite(kp_in) && kp_in >= 0.0f) {
+            Kp = kp_in;
+            sprintf(pt_serial_out_buffer, "Kp set to %f\n", (double)Kp);
+        }
+        else {
+            sprintf(pt_serial_out_buffer, "Kp must be finite and >= 0\n");
+        }
+        serial_write ;
+
+        //ki input
+        sprintf(pt_serial_out_buffer, "input a Ki value: ");
+        serial_write ;
+        serial_read ;
+        if (sscanf(pt_serial_in_buffer,"%f", &ki_in) == 1 &&
+            isfinite(ki_in) && ki_in >= 0.0f) {
+            Ki = ki_in;
+            sprintf(pt_serial_out_buffer, "Ki set to %f\n", (double)Ki);
+        }
+        else {
+            sprintf(pt_serial_out_buffer, "Ki must be finite and >= 0\n");
+        }
+        serial_write ;
+
+        //kd input
+        sprintf(pt_serial_out_buffer, "input a Kd value: ");
+        serial_write ;
+        serial_read ;
+        if (sscanf(pt_serial_in_buffer,"%f", &kd_in) == 1 &&
+            isfinite(kd_in) && kd_in >= 0.0f) {
+            Kd = kd_in;
+            sprintf(pt_serial_out_buffer, "Kd set to %f\n", (double)Kd);
+        }
+        else {
+            sprintf(pt_serial_out_buffer, "Kd must be finite and >= 0\n");
+        }
+        serial_write ; 
     }
     PT_END(pt) ;
 }
