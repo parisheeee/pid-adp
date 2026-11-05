@@ -103,6 +103,8 @@ volatile int threshold = 10 ;
 static struct pt_sem vga_semaphore ;
 
 // Some paramters for PWM
+#define COMP_ALPHA 0.98f   // gyro weight; time constant ~ alpha*dt/(1-alpha)
+#define GYRO_SIGN  -1.0f    // flip to -1.0f if gyro direction disagrees with accel
 #define WRAPVAL 6000
 #define CLKDIV  25.0
 uint slice_num ;
@@ -222,29 +224,36 @@ void on_pwm_wrap() {
         filtered_accel_y += (acceleration[1] - filtered_accel_y) / 16;
         filtered_accel_z += (acceleration[2] - filtered_accel_z) / 16;
 
-        float accel_x = fix2float15(filtered_accel_x);
-        float accel_z = fix2float15(filtered_accel_z);
+        // filtered_accel_* is for plotting.
+        float accel_x = fix2float15(acceleration[0]);
+        float accel_z = fix2float15(acceleration[2]);
         if (accel_x != 0.0f || accel_z != 0.0f) {
 
             float raw_angle = atan2f(accel_x, accel_z)
                             * (180.0f / 3.14159265f);
-    
+
             if (!angle_zero_set) {
                 angle_zero_deg = raw_angle;
                 angle_zero_set = true;
+                beam_angle_deg = 0.0f;   // start filter at accel angle
             }
 
             float relative_angle = raw_angle - angle_zero_deg;
             // Wrap across atan2's -180/+180 boundary.
             if (relative_angle > 180.0f) relative_angle -= 360.0f;
             if (relative_angle < -180.0f) relative_angle += 360.0f;
-            beam_angle_deg = ANGLE_SIGN * relative_angle;
+
+            float accel_angle = ANGLE_SIGN * relative_angle;
+            float dt = CLKDIV * (WRAPVAL + 1) / (float)clock_get_hz(clk_sys);
+            float gyro_rate = GYRO_SIGN * fix2float15(gyro[1]);
+            beam_angle_deg = COMP_ALPHA * (beam_angle_deg + gyro_rate * dt)
+                           + (1.0f - COMP_ALPHA) * accel_angle;
         }
     }
 
     // Proportional correction around the estimated holding command.
     float error = target_angle_deg - beam_angle_deg;
-    float output = Kp * error;
+    float output = Kp * error + Kd * gyro[1];
     if (!imu_ok || !angle_zero_set) output = 0.0f;
     if (output < 0.0f) output = 0.0f;
     if (output > WRAPVAL) output = WRAPVAL;
