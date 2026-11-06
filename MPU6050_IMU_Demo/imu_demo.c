@@ -87,7 +87,7 @@ volatile int head = 0 ;
 char screentext[80];
 
 // draw speed
-volatile int threshold = 10 ;
+volatile int threshold = 100 ;
 
 // Some macros for max/min/abs
 #define min(a,b) ((a<b) ? a:b)
@@ -98,14 +98,19 @@ volatile int threshold = 10 ;
 static struct pt_sem vga_semaphore ;
 
 // Some paramters for PWM
-#define COMP_ALPHA 0.98f   // gyro weight; time constant ~ alpha*dt/(1-alpha)
-#define WRAPVAL 5000
+#define COMP_ALPHA 0.98f   /// gyro weight; time constant ~ alpha*dt/(1-alpha)
+#define WRAPVAL 6000
+#define MAX_DUTY 0.7f
+#define MAX_CONTROL ((int)(WRAPVAL * MAX_DUTY))
 #define CLKDIV  25.0
 #define DT (CLKDIV * (WRAPVAL + 1) / (float)clock_get_hz(clk_sys))
 uint slice_num ;
 
 // GPIO we're using for PWM
 #define PWM_OUT 4
+
+#define BUTTON_PIN 15
+volatile bool motor_hold = false ;
 
 // PWM duty cycle
 volatile int control ;
@@ -116,14 +121,14 @@ volatile bool imu_ok = false ;
 
 // PID Constants
 
-volatile float Kp = 0.0f;
+volatile float Kp = 20.0f;
 
 // Set to the measured PWM needed to hold the arm horizontal (90 degrees).
 // Zero leaves feedforward disabled until calibrated.
 #define HOVER_PWM 0.0f
 volatile float target_angle_deg = 0.0f;
-volatile float Ki = 0.0f;
-volatile float Kd = 0.0f;
+volatile float Ki = 90.0f;
+volatile float Kd = 7.0f;
 
 
 // Free the I2C bus and (re)initialize the I2C peripheral. If the Pico is
@@ -153,11 +158,15 @@ void i2c_bus_recover() {
 }
 
 // Check that the MPU6050 answers (WHO_AM_I register 0x75), and configure it if so
-bool imu_probe() {
+bool imu_present(uint32_t timeout_us) {
     uint8_t reg = 0x75 ;
     uint8_t who = 0 ;
-    if (i2c_write_timeout_us(I2C_CHAN, ADDRESS, &reg, 1, true, 1000) == 1 &&
-        i2c_read_timeout_us(I2C_CHAN, ADDRESS, &who, 1, false, 1000) == 1) {
+    return i2c_write_timeout_us(I2C_CHAN, ADDRESS, &reg, 1, true, timeout_us) == 1 &&
+           i2c_read_timeout_us(I2C_CHAN, ADDRESS, &who, 1, false, timeout_us) == 1 ;
+}
+
+bool imu_probe() {
+    if (imu_present(1000)) {
         mpu6050_reset() ;
         return true ;
     }
@@ -190,7 +199,7 @@ void drawAxes() {
 }
 
 volatile int throttle = 10 ;
-#define D_MULT 0.0001f
+#define D_MULT 0.00001f
 
 // Interrupt service routine
 void on_pwm_wrap() {
@@ -202,6 +211,11 @@ void on_pwm_wrap() {
     // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
     // If you want these values in floating point, call fix2float15() on
     // the raw measurements.
+    static int probe_tick = 0;
+    if (imu_ok && ++probe_tick >= 10) {
+        probe_tick = 0;
+        imu_ok = imu_present(250);
+    }
     if (imu_ok) {
         mpu6050_read_raw(acceleration, gyro);
         float accel_x = fix2float15(acceleration[0]);
@@ -223,30 +237,36 @@ void on_pwm_wrap() {
             if (relative_angle < -180.0f) relative_angle += 360.0f;
 
             float accel_angle = -relative_angle;
+            if (accel_angle < -90.0f) accel_angle += 360.0f;
+            if (accel_angle < 0.0f) accel_angle = 0.0f;
+            if (accel_angle > 180.0f) accel_angle = 180.0f;
             accel_angle_deg = accel_angle;
             float gyro_rate = fix2float15(gyro[1]);
-            beam_angle_deg = COMP_ALPHA * (beam_angle_deg + gyro_rate * DT)
-                           + (1.0f - COMP_ALPHA) * accel_angle;
+            float new_angle = COMP_ALPHA * (beam_angle_deg + gyro_rate * DT)
+                            + (1.0f - COMP_ALPHA) * accel_angle;
+            if (new_angle < 0.0f) new_angle = 0.0f;
+            if (new_angle > 180.0f) new_angle = 180.0f;
+            beam_angle_deg = new_angle;
         }
     }
 
     static float integral = 0.0f;
 
     float error = target_angle_deg - beam_angle_deg;
-    bool saturated = (control >= WRAPVAL && error > 0.0f) ||
+    bool saturated = (control >= MAX_CONTROL && error > 0.0f) ||
                      (control <= 0 && error < 0.0f);
-    if (!imu_ok || !angle_zero_set) integral = 0.0f;
+    if (!imu_ok || !angle_zero_set || motor_hold) integral = 0.0f;
     else if (!saturated) integral += error * DT;
     if (Ki > 0.0f) {
-        float imax = WRAPVAL / Ki;
+        float imax = MAX_CONTROL / Ki;
         if (integral > imax) integral = imax;
         if (integral < -imax) integral = -imax;
     }
     else integral = 0.0f;
     float output = Kp * error - Kd * D_MULT * gyro[1] + Ki * integral;
-    if (!imu_ok || !angle_zero_set) output = 0.0f;
+    if (!imu_ok || !angle_zero_set || motor_hold) output = 0.0f;
     if (output < 0.0f) output = 0.0f;
-    if (output > WRAPVAL) output = WRAPVAL;
+    if (output > MAX_CONTROL) output = MAX_CONTROL;
     control = (int)output;
     pwm_set_chan_level(slice_num, PWM_CHAN_A, control);
 
@@ -284,7 +304,6 @@ static PT_THREAD (protothread_draw(struct pt *pt))
     while(1) {
         // Wait for a buffer swap
         PT_YIELD_UNTIL(pt, draw_start_signal()) ;
-        gpio_put(15, !gpio_get(15)) ;
         
         // Clear the buffer, draw the axes
         clearLowFrame(0, BLACK) ;
@@ -414,7 +433,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         else {
             sprintf(pt_serial_out_buffer, "Kd must be finite and >= 0\n");
         }
-        serial_write ; 
+        serial_write ;
     }
     PT_END(pt) ;
 }
@@ -434,11 +453,40 @@ static PT_THREAD (protothread_imu_retry(struct pt *pt))
     PT_END(pt) ;
 }
 
+static PT_THREAD (protothread_button(struct pt *pt))
+{
+    PT_BEGIN(pt) ;
+    static bool seq_active = false ;
+    static bool armed = false ;
+    static uint32_t t0 ;
+    static uint32_t t ;
+    while(1) {
+        PT_YIELD_usec(10000) ;
+        if (!gpio_get(BUTTON_PIN)) {
+            motor_hold = true ;
+            armed = true ;
+            seq_active = false ;
+            target_angle_deg = 0.0f ;
+        }
+        else if (motor_hold && armed) {
+            armed = false ;
+            motor_hold = false ;
+            seq_active = true ;
+            t0 = time_us_32() ;
+        }
+        if (seq_active) {
+            t = (time_us_32() - t0) / 1000000 ;
+            if (t >= 15) { target_angle_deg = 90.0f ; seq_active = false ; }
+            else if (t >= 10) target_angle_deg = 60.0f ;
+            else if (t >= 5) target_angle_deg = 120.0f ;
+            else target_angle_deg = 90.0f ;
+        }
+    }
+    PT_END(pt) ;
+}
+
 // Entry point for core 1
 void core1_entry() {
-    gpio_init(15) ;
-    gpio_set_dir(15, GPIO_OUT) ;
-    gpio_put(15, 0) ;
     pt_add_thread(protothread_draw) ;
     pt_schedule_start ;
 }
@@ -466,6 +514,11 @@ int main() {
     gpio_set_dir(14, GPIO_OUT) ;
     gpio_put(14, 0) ;
 
+
+    // control sequence GPIO 
+    gpio_init(BUTTON_PIN) ;
+    gpio_set_dir(BUTTON_PIN, GPIO_IN) ;
+    gpio_pull_up(BUTTON_PIN) ;
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////// I2C CONFIGURATION ////////////////////////////
     // Free a possibly stuck bus, init I2C (internal pull-ups stay on as a
@@ -519,6 +572,7 @@ int main() {
     // start core 0 (core 1 was started right after initVGA)
     pt_add_thread(protothread_serial) ;
     pt_add_thread(protothread_imu_retry) ;
+    pt_add_thread(protothread_button) ;
     pt_schedule_start ;
 
 }
