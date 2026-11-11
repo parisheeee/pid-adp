@@ -47,6 +47,7 @@
 #outline(indent: auto, depth: 2)
 #pagebreak()
 
+#todo([Parishee])
 // ============================================================
 = Introduction
 // ============================================================
@@ -56,17 +57,16 @@
 = Design and Testing Methods
 // ============================================================
 
+#todo([Akmal])
 == System overview
 
 
-
+#todo([Parishee])
 == Hardware
 
 === IMU (MPU6050)
 
 === Motor drive and electrical isolation
-
-=== User interface
 
 #figure(
   table(
@@ -84,6 +84,7 @@
   caption: [Pin assignments.],
 ) <tab:pins>
 
+#todo([Demetrios])
 == Software
 
 === Angle estimation
@@ -96,13 +97,13 @@ $ theta[k] = alpha (theta[k-1] + omega[k] d t) + (1 - alpha) theta_a[k], quad al
 $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
 
 
-
-
 === Serial interface
 
 === VGA display
 
 === Demo sequence
+
+=== Noise and filtering
 
 == Selecting the PID gains
 
@@ -118,6 +119,7 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
   caption: [Tuning log.],
 ) <tab:tune>
 
+#todo([Demetrios])
 == Testing
 
 #figure(
@@ -137,12 +139,13 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
   caption: [Verification tests.],
 )
 
-== AI use
+=== Debugging 
 
 // ============================================================
 = Documentation
 // ============================================================
 
+#todo([Parishee])
 == Schematic
 #figure(
   // image("figures/schematic.png", width: 100%),  // restore once the file exists
@@ -150,6 +153,7 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
   caption: [Schematic of the motor drive, IMU, and user-interface circuits.],
 ) <fig:schematic>
 
+#todo([Demetrios])
 == Software System Diagram
 #figure(
   // image("figures/software-diagram.png", width: 90%),  // restore once the file exists
@@ -157,6 +161,7 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
   caption: [Software organization: 1 kHz PID ISR, serial/button/retry threads on core 0, VGA draw thread on core 1.],
 ) <fig:flow>
 
+#todo([Akmal])
 == Mechanical assembly
 #figure(
   // image("figures/assembly.jpeg", width: 80%),  // restore once the file exists
@@ -167,7 +172,7 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
 // ============================================================
 = Results
 // ============================================================
-
+#todo([Akmal])
 == Final Product
 #figure(
   // image("figures/final-product.jpeg", width: 100%),  // restore once the file exists
@@ -175,6 +180,7 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
   caption: [Final 1D helicopter with the VGA display and controller board.],
 ) <fig:final-product>
 
+#todo([Akmal])
 == Four-angle demo sequence
 #figure(
   // image("figures/vga-sequence.jpeg", width: 100%),  // restore once the file exists
@@ -182,6 +188,7 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
   caption: [VGA capture of the button-triggered sequence: motor control and actual angle as the target goes 90#sym.degree #sym.arrow 120#sym.degree #sym.arrow 60#sym.degree #sym.arrow 90#sym.degree.],
 ) <fig:sequence>
 
+#todo([Akmal])
 == Stable angle range
 
 == Settling times
@@ -196,28 +203,27 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
   caption: [Step response at different angles.],
 ) <tab:settle>
 
-== Noise and filtering
-
-// ============================================================
-= Conclusions
-// ============================================================
-
-
 // ============================================================
 = Lab Questions
 // ============================================================
 
-
+#todo([Akmal])
 == Question 1
 _How did you select the three PID gains?_
 
-
+#todo([Parishee])
 == Question 2
 _What are the maximum and minimum angles that give stable behavior with your gains?_
 
-
+#todo([Parishee])
 == Question 3
 _What are the settling times at different angles?_
+
+
+// ============================================================
+= Conclusions
+// ============================================================
+#todo([Akmal])
 
 
 // ============================================================
