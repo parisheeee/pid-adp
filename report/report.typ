@@ -174,7 +174,6 @@ The helicopter is a lever arm that hangs from a hinge, with the fan motor mounte
 // ============================================================
 = Results
 // ============================================================
-#todo([Akmal])
 == Final Product
 Our finished 1D helicopter is a PCB lever arm hanging from a hinge on a wooden block, with a fan motor at the free end and an MPU6050 IMU near the hinge. The RP2350 reads the IMU, estimates the arm angle, and uses a PID controller to drive the motor so the arm holds whatever angle we choose. We set the target angle and the three gains from a serial terminal while the program runs, and the new values take effect right away. The final gains were $K_p = 20$, $K_i = 90$, and $K_d = 7$, and the program also starts with these values. A button on GPIO 15 runs the preset sequence of target angles asked for in the final/week 3 demo. The VGA display plots four live traces: gyro rate, accelerometer angle, filtered beam angle, and motor command. The top line of the screen also shows the current beam angle, target, and gains.
 #figure(
@@ -183,7 +182,6 @@ Our finished 1D helicopter is a PCB lever arm hanging from a hinge on a wooden b
   caption: [Final 1D helicopter with the VGA display and controller board.],
 ) <fig:final-product>
 
-#todo([Akmal])
 == Four-angle demo sequence
 The button runs a fixed test so we can observe how the controller handles steps both up and down. The program checks the button every 10 ms. While the button is held, the motor is forced off, the integral term is reset to zero, and the target is set to 0°, so the arm hangs straight down. When the button is released, a timer starts and the target changes on its own. It is 90° (horizontal) for the first 5 seconds, 120° (30° above horizontal) from 5 to 10 seconds, 60° (30° below horizontal) from 10 to 15 seconds, and then back to 90°, where it stays. The sequence uses whatever gains are set at the time. @fig:sequence is a VGA capture of one run. The yellow trace is the beam angle and the cyan trace is the motor command. The plots save one sample every 100 ms and the whole sequence fits on one screen. Because the motor command is capped at 70% duty, the cyan trace never goes above 70% of its plot height.
 #figure(
@@ -192,7 +190,7 @@ The button runs a fixed test so we can observe how the controller handles steps 
   caption: [VGA capture of the button-triggered sequence: motor control and actual angle as the target goes 90#sym.degree #sym.arrow 120#sym.degree #sym.arrow 60#sym.degree #sym.arrow 90#sym.degree.],
 ) <fig:sequence>
 
-#todo([Akmal])
+#todo([can whoever has the video for this take this section from me plss (＾▽＾) -ak])
 == Stable angle range
 
 == Settling times
@@ -227,7 +225,9 @@ _What are the settling times at different angles?_
 // ============================================================
 = Conclusions
 // ============================================================
-#todo([Akmal])
+One of the most interesting parts of this lab was seeing what each PID term actually did to the arm. With only proportional control, the arm oscillated. The P term works like a spring: the farther the arm is from the target, the harder the motor pushes it back. But the P term doesn’t care how fast the arm is already moving, so the arm overshoots the target and swings back and forth. When we added the derivative term, the oscillation was greatly reduced. Our D term uses the gyro rate, so it pushes against the arm’s motion, a lot like friction. The faster the arm moves toward the target, the more the D term slows it down, so it settles instead of overshooting. Before this, we knew that D adds damping. Watching the arm go from swinging back and forth to settling in a smoother fashion made that idea much easier to understand.
+
+Building and tuning the 1D helicopter ourselves gave us a much better understanding for how a PID controller works. 
 
 
 // ============================================================
