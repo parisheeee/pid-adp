@@ -163,8 +163,8 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
   caption: [Software organization: 1 kHz PID ISR, serial/button/retry threads on core 0, VGA draw thread on core 1.],
 ) <fig:flow>
 
-#todo([Akmal])
 == Mechanical assembly
+The helicopter is a lever arm that hangs from a hinge, with the fan motor mounted at the free end. The hinge is screwed onto a wooden block, which holds the arm up so it can hang straight down and swing freely. The arm itself is a printed circuit board. The motor points so its thrust lifts the arm. The MPU6050 plugs into header pins on the PCB near the hinge. Its Y axis lines up with the hinge, which the angle code depends on.
 #figure(
   // image("figures/assembly.jpeg", width: 80%),  // restore once the file exists
   placeholder("assembly.jpeg"),
