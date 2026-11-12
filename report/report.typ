@@ -1,6 +1,6 @@
 #set document(
   title: "ECE 4760 / 5730 Lab 3: PID Control of a 1D Helicopter",
-  author: ("TODO: Name 1", "TODO: Name 2", "TODO: Name 3"),
+  author: ("Demetrios Gavalas", "Parishee Bajaj", "Akmal Rupasingha"),
 )
 #set page(paper: "us-letter", margin: 1in, numbering: "1")
 #set text(font: "New Computer Modern", size: 11pt)
@@ -13,8 +13,6 @@
   width: 100%, height: 2in, fill: luma(240), stroke: (dash: "dashed", paint: luma(150)),
   align(center + horizon, text(fill: luma(100))[Figure placeholder: #raw(name)]),
 )
-
-#let todo(body) = text(fill: rgb("#b45309"), style: "italic")[TODO: #body]
 
 // Appendix B prompt log helpers
 #let prompt(n, body) = block(
@@ -37,21 +35,20 @@
   #text(size: 20pt, weight: "bold")[PID Control of a 1D Helicopter]
   #v(0.6em)
   #text(size: 12pt)[
-    Demetrios Gavalas, Akmal Rupasingha, Parishee Bajaj]\
+    Demetrios Gavalas, Parishee Bajaj, Akmal Rupasingha\
     Cornell University \
-    ECE 5730 #todo[section/time] \u{00B7} #datetime.today().display("[month repr:long] [day], [year]")
+    ECE 5730 \u{00B7} #datetime.today().display("[month repr:long] [day], [year]")
   ]
-\]
+]
 
 #v(1em)
 #outline(indent: auto, depth: 2)
 #pagebreak()
 
-#todo([Parishee])
 // ============================================================
 = Introduction
 // ============================================================
-
+Motors are used in many applications from aerospace to consumer electronics, and due to the mechanical nature of motors, they are subject to wear and tear which can cause discrepancies in how they behave in different conditions and over time. One way to address these nonlinearities is to use a feedback control system, adjusting the input based on the output to achieve a desired behavior. In this lab, we implemented a PID controller to control the angle of a physical one-degree of freedom helicopter. The setup consists of a fan on a lever arm mounted onto a hinge, with an IMU mounted on the lever arm to pass relevant gyroscope & acceleration information, a motor controller to drive the fan, and a VGA display to showcase relevant information, all of which were interfaced with the RP2350. After implementation, we spent time in testing & tuning the PID parameters to reduce settling time & accuracy.  
 
 // ============================================================
 = Design and Testing Methods
@@ -63,12 +60,36 @@ Our 1D helicopter is a lever arm on a hinge with a small fan motor at the free e
 We measure the beam angle in degrees, with 0° when the arm hangs straight down, 90° when it is horizontal, and 180° when it points straight up. Using our convention, the handout’s button sequence of horizontal, 30° above, 30° below, and back to horizontal becomes targets of 90°, 120°, 60°, and 90°. The program zeroes the accelerometer angle when it starts, so the arm has to hang straight down whenever the Pico is powered on or reset.
 
 
-#todo([Parishee])
 == Hardware
+The motor was mounted onto the PCB lever arm that we were provided in class. The lever arm was a PCB that had a fan mounted on one end, and the IMU & hinge mounted on the other end. The electrical connections, motor +/-, 3.3V, GND, SDA, & SCL were all made using screw terminals. 
+
+The motor itself was not directly driven by the RP2350 because of the power requirements, and instead it was driven by an electrical isolated motor drive circuit. This circuit was on a seperate PCB that we also soldered in lab, and the RP2350 communicated with it using a PWM signal. The motor itself was powered through the motor drive circuit PCB using a 5V barrel-jack power supply. The IMU was powered by the RP2350 using 3.3V and GND via screw terminals, and communicated with the RP2350 using I2C. The motor itself was driven by the high-power MOSFET rapidly switching on and off to pass the PWM signal to the motor. This MOSFET acted as a kill-switch and was powered by a seperate 12V power supply. The kill-switch allowed us to instantly break the connection between the motor and the MOSFET, so the motor would stop moving even though it was still technically powered by the 5V supply and the RP2350 was still sending PWM signals.
+
+#figure(
+  image("figures/motor-board.png", width: 75%),
+  caption: [Populated motor control PCB with power connections, PWM input, optoisolator, MOSFET, and kill switch. Source: #link("https://vanhunteradams.com/Pico/Helicopter/MotorCircuit.html")[V. Hunter Adams].],
+) <fig:motor-board>
 
 === IMU (MPU6050)
+The IMU that we used was the MPU6050, integrated on an Adafruit breakout board. The IMU is 6-DOF meaning that we get information on 3 axes of acceleration and 3 axes of angular velocity. The IMU was powered by the RP2350 and communicated with it using I2C. It's important to have the IMU securely mounted & aligned with the fans motion ensure that the data we recieve is accurate to apply to the PID controller. 
+
+#figure(
+  image("figures/mpu6050.jpg", width: 75%),
+  caption: [Adafruit MPU6050 breakout board showing the sensor axes and pin labels. Source: #link("https://learn.adafruit.com/mpu6050-6-dof-accelerometer-and-gyro/pinouts")[Adafruit].],
+) <fig:imu>
 
 === Motor drive and electrical isolation
+
+Motors are high power and can introduce a lot of electrical noise to whatever system they are connected to. This is especially apparent at startup and large changes in speed. Noise can interfere with sensitive data lines, especially with sensors, and also cause damage to the RP2350's power line which can fry the RP2350. The best way to preven this is to electrically isolate the motor from the RP2350 and relevant peripherals. We did this by using two different power supplies, the RP2350 being powered off of our laptop and the motor being powered off of a 5V barrel jack power supply. 
+
+Despite the power isolation, the PWM signal from the RP2350 still had to reach the motor driver circuit which one may think would need to be an electrical connection. However, we used an optoisolator, a component which is able to convert electrical signal into light and transfer it to another electrical signal to the other side of the optoisolator. This communicated the PWm signal without unintentionally interfering with either side of the circuit.
+
+
+#figure(
+  image("figures/motor-drive.png", width: 100%),
+  caption: [Motor drive circuit with a 4N35 optoisolator, IRLB8721 MOSFET, and mechanical kill switch. Source: #link("https://vanhunteradams.com/Pico/Helicopter/MotorCircuit.html")[V. Hunter Adams].],
+) <fig:motor-drive>
+
 
 #figure(
   table(
@@ -188,16 +209,16 @@ We did have intermittent issues with losing connection to the IMU, especially wh
 
 
 === Debugging 
+After implementing all three terms of the PID controller, we noticed that the motor would behave strangely if we tried to reach large changes in angle very quickly. It would start oscillating, with the motor turning on and off uncontrollably, and we would also lose I2C connection with the IMU. We realized that this was due to the fact that to reach this large change in angle, the PID controller would output a very large PWM duty cycle. This would typically be fine, but if the controller was not moving at all, i.e. PWM duty cycle of 0, the large change in duty cycle would cause the motor to draw a lot of current and fail. To address this, we artificially limited the maximum PWM duty cycle to 70% of what the maximum, to reduce the largest change in duty cycle that the controller could output.
+
 
 // ============================================================
 = Documentation
 // ============================================================
 
-#todo([Parishee])
 == Schematic
 #figure(
-  // image("figures/schematic.png", width: 100%),  // restore once the file exists
-  placeholder("schematic.png"),
+  image("figures/schematic.png", width: 100%),
   caption: [Schematic of the motor drive, IMU, and user-interface circuits.],
 ) <fig:schematic>
 
@@ -207,8 +228,7 @@ We did have intermittent issues with losing connection to the IMU, especially wh
 == Mechanical assembly
 The helicopter is a lever arm that hangs from a hinge, with the fan motor mounted at the free end. The hinge is screwed onto a wooden block, which holds the arm up so it can hang straight down and swing freely. The arm itself is a printed circuit board. The motor points so its thrust lifts the arm. The MPU6050 plugs into header pins on the PCB near the hinge. Its Y axis lines up with the hinge, which the angle code depends on.
 #figure(
-  // image("figures/assembly.jpeg", width: 80%),  // restore once the file exists
-  placeholder("assembly.jpeg"),
+  image("figures/assembly.png", width: 65%),
   caption: [Lever arm, motor, hinge, and IMU.],
 ) <fig:assembly>
 
@@ -217,35 +237,18 @@ The helicopter is a lever arm that hangs from a hinge, with the fan motor mounte
 // ============================================================
 == Final Product
 Our finished 1D helicopter is a PCB lever arm hanging from a hinge on a wooden block, with a fan motor at the free end and an MPU6050 IMU near the hinge. The RP2350 reads the IMU, estimates the arm angle, and uses a PID controller to drive the motor so the arm holds whatever angle we choose. We set the target angle and the three gains from a serial terminal while the program runs, and the new values take effect right away. The final gains were $K_p = 20$, $K_i = 90$, and $K_d = 7$, and the program also starts with these values. A button on GPIO 15 runs the preset sequence of target angles asked for in the final/week 3 demo. The VGA display plots four live traces: gyro rate, accelerometer angle, filtered beam angle, and motor command. The top line of the screen also shows the current beam angle, target, and gains.
-#figure(
-  // image("figures/final-product.jpeg", width: 100%),  // restore once the file exists
-  placeholder("final-product.jpeg"),
-  caption: [Final 1D helicopter with the VGA display and controller board.],
-) <fig:final-product>
 
 == Four-angle demo sequence
 The button runs a fixed test so we can observe how the controller handles steps both up and down. The program checks the button every 10 ms. While the button is held, the motor is forced off, the integral term is reset to zero, and the target is set to 0°, so the arm hangs straight down. When the button is released, a timer starts and the target changes on its own. It is 90° (horizontal) for the first 5 seconds, 120° (30° above horizontal) from 5 to 10 seconds, 60° (30° below horizontal) from 10 to 15 seconds, and then back to 90°, where it stays. The sequence uses whatever gains are set at the time. @fig:sequence is a VGA capture of one run. The yellow trace is the beam angle and the cyan trace is the motor command. The plots save one sample every 100 ms and the whole sequence fits on one screen. Because the motor command is capped at 70% duty, the cyan trace never goes above 70% of its plot height.
 #figure(
-  // image("figures/vga-sequence.jpeg", width: 100%),  // restore once the file exists
-  placeholder("vga-sequence.jpeg"),
-  caption: [VGA capture of the button-triggered sequence: motor control and actual angle as the target goes 90#sym.degree #sym.arrow 120#sym.degree #sym.arrow 60#sym.degree #sym.arrow 90#sym.degree.],
+  image("figures/vga-sequence.png", width: 100%),
+  caption: [VGA capture of the 90#sym.degree to 120#sym.degree target-angle transition, showing gyro rate, accelerometer angle, filtered beam angle, and motor PWM command.],
 ) <fig:sequence>
 
-#todo([can whoever has the video for this take this section from me plss (＾▽＾) -ak])
-== Stable angle range
-
-== Settling times
 #figure(
-  table(
-    columns: (1fr, 1fr, 1fr, 1fr),
-    inset: 6pt, align: center, stroke: 0.5pt,
-    table.header[*Start*][*Target*][*Overshoot*][*Settling time (s)*],
-    [#todo[]], [], [], [],
-    [], [], [], [],
-  ),
-  caption: [Step response at different angles.],
-) <tab:settle>
-
+  image("figures/vga-full-sequence.png", width: 75%),
+  caption: [VGA traces of the complete four-step angle sequence (0#sym.degree #sym.arrow 90#sym.degree #sym.arrow 120#sym.degree #sym.arrow 60#sym.degree #sym.arrow 90#sym.degree), showing gyro rate, accelerometer angle, filtered beam angle, and motor PWM command.],
+) <fig:full-sequence>
 // ============================================================
 = Lab Questions
 // ============================================================
@@ -254,24 +257,26 @@ The button runs a fixed test so we can observe how the controller handles steps 
 _How did you select the three PID gains?_
 We tuned the gains by hand, one term at a time, typing new values into the serial terminal while the arm was running so we could see the effect right away. We started with only proportional control, with $K_i$ and $K_d$ set to 0. We raised $K_p$ until the arm could lift off and get close to the target. With a low $K_p$ the arm sagged well below the target, and raising $K_p$ brought it closer but made it overshoot and swing back and forth. Next we added the derivative term to damp the motion. Our first version did not work: it used the raw gyro reading with the wrong sign, so instead of slowing the arm down it pushed it the same way it was already moving. The raw reading was also so large that even a small $K_d$ slammed the motor between off and full power whenever the arm moved. We fixed the sign and scaled the gyro reading down by $10^{-5}$ so that $K_d$ could be a normal-sized number. Last, we added the integral term to remove the steady-state error, since with P and D alone the arm settled a little below the target. The motor needs steady thrust to hold the arm up, and a P controller only gives thrust when there is some error. We stop the integral from growing while the motor is at its limit, so it cannot build up and cause a large overshoot later. We ended with $K_p = 20$, $K_i = 90$, and $K_d = 7$, because this set moved the arm to each new target quickly with little overshoot and stayed stable at every angle in the demo sequence.
 
-#todo([Parishee])
 == Question 2
 _What are the maximum and minimum angles that give stable behavior with your gains?_
 
-#todo([Parishee])
+The minimum angle that we could stably hold was 15 degrees. This was due to the fact that our electrical connections were a bunch of solid core wires connected to screw terminals. These wires introduced some unwanted tension & pressure on the lever arm, preventing a full range of motion. The maximum angle that we could stably hold was 175 degrees. This was also limited by mechanical constraints since the screw attaching the lever arm to the hing would hit the wood plank at this angle preventing further motion.
+
 == Question 3
 _What are the settling times at different angles?_
+The settling time from 0 to 90 degrees is 1.77 seconds. The settling time from 90 to 120 degrees is 3.87 seconds. The settling time from 120 to 60 degrees is 1.37 seconds. 
+
 
 
 // ============================================================
 = Conclusions
 // ============================================================
-#todo([feel free to add any concluding thoughts for what u found interesting i j added mine here hehe (＾▽＾) -ak])
 
 One of the most interesting parts of this lab was seeing what each PID term actually did to the arm. With only proportional control, the arm oscillated. The P term works like a spring: the farther the arm is from the target, the harder the motor pushes it back. But the P term doesn’t care how fast the arm is already moving, so the arm overshoots the target and swings back and forth. When we added the derivative term, the oscillation was greatly reduced. Our D term uses the gyro rate, so it pushes against the arm’s motion, a lot like friction. The faster the arm moves toward the target, the more the D term slows it down, so it settles instead of overshooting. Before this, we knew that D adds damping. Watching the arm go from swinging back and forth to settling in a smoother fashion made that idea much easier to understand.
 
 Building and tuning the 1D helicopter ourselves gave us a much better understanding for how a PID controller works. 
 
+If we were to implement this system again, we'd try to create better connections in between our several PCBs and the RP2350. These connnections often came lose during testing and would cause the system to fail. Additionally, with the way we had the rig, the wiring prevented our lever arm from naturally hanging at 0 degrees, and instead would be at 15 degrees if not held down. We also noticed, that there was some degree of freedom left and right with the hinges that we were working with which added a degree of freedom to our system that we did not account for. In the future, we'd try to make both our electrical & mechanical connections more robust. 
 
 // ============================================================
 #heading(numbering: none)[Appendix A --- Commented Program Listing]
