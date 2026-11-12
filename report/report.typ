@@ -61,7 +61,7 @@ We measure the beam angle in degrees, with 0° when the arm hangs straight down,
 
 
 == Hardware
-The motor that we were provided was mounted onto the PCB lever arm that we were provided in class. The lever arm was a PCB that had a fan mounted on one end, and the IMU & hinge mounted on the other end. The electrical connections, motor +/-, 3.3V, GND, SDA, & SCL were all made using screw terminals. 
+The motor was mounted onto the PCB lever arm that we were provided in class. The lever arm was a PCB that had a fan mounted on one end, and the IMU & hinge mounted on the other end. The electrical connections, motor +/-, 3.3V, GND, SDA, & SCL were all made using screw terminals. 
 
 The motor itself was not directly driven by the RP2350 because of the power requirements, and instead it was driven by an electrical isolated motor drive circuit. This circuit was on a seperate PCB that we also soldered in lab, and the RP2350 communicated with it using a PWM signal. The motor itself was powered through the motor drive circuit PCB using a 5V barrel-jack power supply. The IMU was powered by the RP2350 using 3.3V and GND via screw terminals, and communicated with the RP2350 using I2C. The motor itself was driven by the high-power MOSFET rapidly switching on and off to pass the PWM signal to the motor. This MOSFET acted as a kill-switch and was powered by a seperate 12V power supply. The kill-switch allowed us to instantly break the connection between the motor and the MOSFET, so the motor would stop moving even though it was still technically powered by the 5V supply and the RP2350 was still sending PWM signals.
 
@@ -228,8 +228,7 @@ After implementing all three terms of the PID controller, we noticed that the mo
 == Mechanical assembly
 The helicopter is a lever arm that hangs from a hinge, with the fan motor mounted at the free end. The hinge is screwed onto a wooden block, which holds the arm up so it can hang straight down and swing freely. The arm itself is a printed circuit board. The motor points so its thrust lifts the arm. The MPU6050 plugs into header pins on the PCB near the hinge. Its Y axis lines up with the hinge, which the angle code depends on.
 #figure(
-  // image("figures/assembly.jpeg", width: 80%),  // restore once the file exists
-  placeholder("assembly.jpeg"),
+  image("figures/assembly.png", width: 65%),
   caption: [Lever arm, motor, hinge, and IMU.],
 ) <fig:assembly>
 
@@ -238,11 +237,6 @@ The helicopter is a lever arm that hangs from a hinge, with the fan motor mounte
 // ============================================================
 == Final Product
 Our finished 1D helicopter is a PCB lever arm hanging from a hinge on a wooden block, with a fan motor at the free end and an MPU6050 IMU near the hinge. The RP2350 reads the IMU, estimates the arm angle, and uses a PID controller to drive the motor so the arm holds whatever angle we choose. We set the target angle and the three gains from a serial terminal while the program runs, and the new values take effect right away. The final gains were $K_p = 20$, $K_i = 90$, and $K_d = 7$, and the program also starts with these values. A button on GPIO 15 runs the preset sequence of target angles asked for in the final/week 3 demo. The VGA display plots four live traces: gyro rate, accelerometer angle, filtered beam angle, and motor command. The top line of the screen also shows the current beam angle, target, and gains.
-#figure(
-  // image("figures/final-product.jpeg", width: 100%),  // restore once the file exists
-  placeholder("final-product.jpeg"),
-  caption: [Final 1D helicopter with the VGA display and controller board.],
-) <fig:final-product>
 
 == Four-angle demo sequence
 The button runs a fixed test so we can observe how the controller handles steps both up and down. The program checks the button every 10 ms. While the button is held, the motor is forced off, the integral term is reset to zero, and the target is set to 0°, so the arm hangs straight down. When the button is released, a timer starts and the target changes on its own. It is 90° (horizontal) for the first 5 seconds, 120° (30° above horizontal) from 5 to 10 seconds, 60° (30° below horizontal) from 10 to 15 seconds, and then back to 90°, where it stays. The sequence uses whatever gains are set at the time. @fig:sequence is a VGA capture of one run. The yellow trace is the beam angle and the cyan trace is the motor command. The plots save one sample every 100 ms and the whole sequence fits on one screen. Because the motor command is capped at 70% duty, the cyan trace never goes above 70% of its plot height.
