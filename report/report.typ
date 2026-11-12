@@ -37,9 +37,9 @@
   #text(size: 20pt, weight: "bold")[PID Control of a 1D Helicopter]
   #v(0.6em)
   #text(size: 12pt)[
-    Demetrios Gavalas, #todo[other names]\
+    Demetrios Gavalas, Parishee Bajaj, Akmal Rupasingha\
     Cornell University \
-    ECE 5730 #todo[section/time] \u{00B7} #datetime.today().display("[month repr:long] [day], [year]")
+    ECE 5730 \u{00B7} #datetime.today().display("[month repr:long] [day], [year]")
   ]
 ]
 
@@ -51,7 +51,7 @@
 // ============================================================
 = Introduction
 // ============================================================
-
+Motors are used in many applications from aerospace to consumer electronics, and due to the mechanical nature of motors, they are subject to wear and tear which can cause discrepancies in how they behave in different conditions and over time. One way to address these nonlinearities is to use a feedback control system, adjusting the input based on the output to achieve a desired behavior. In this lab, we implemented a PID controller to control the angle of a physical one-degree of freedom helicopter. The setup consists of a fan on a lever arm mounted onto a hinge, with an IMU mounted on the lever arm to pass relevant gyroscope & acceleration information, a motor controller to drive the fan, and a VGA display to showcase relevant information, all of which were interfaced with the RP2350. After implementation, we spent time in testing & tuning the PID parameters to reduce settling time & accuracy.  
 
 // ============================================================
 = Design and Testing Methods
@@ -59,14 +59,37 @@
 
 #todo([Akmal])
 == System overview
-
-
 #todo([Parishee])
 == Hardware
+The motor that we were provided was mounted onto the PCB lever arm that we were provided in class. The lever arm was a PCB that had a fan mounted on one end, and the IMU & hinge mounted on the other end. The electrical connections, motor +/-, 3.3V, GND, SDA, & SCL were all made using screw terminals. 
+
+The motor itself was not directly driven by the RP2350 because of the power requirements, and instead it was driven by an electrical isolated motor drive circuit. This circuit was on a seperate PCB that we also soldered in lab, and the RP2350 communicated with it using a PWM signal. The motor itself was powered through the motor drive circuit PCB using a 5V barrel-jack power supply. The IMU was powered by the RP2350 using 3.3V and GND via screw terminals, and communicated with the RP2350 using I2C. The motor itself was driven by the high-power MOSFET rapidly switching on and off to pass the PWM signal to the motor. This MOSFET acted as a kill-switch and was powered by a seperate 12V power supply. The kill-switch allowed us to instantly break the connection between the motor and the MOSFET, so the motor would stop moving even though it was still technically powered by the 5V supply and the RP2350 was still sending PWM signals.
+
+#figure(
+  image("figures/motor-board.png", width: 75%),
+  caption: [Populated motor control PCB with power connections, PWM input, optoisolator, MOSFET, and kill switch. Source: #link("https://vanhunteradams.com/Pico/Helicopter/MotorCircuit.html")[V. Hunter Adams].],
+) <fig:motor-board>
 
 === IMU (MPU6050)
+The IMU that we used was the MPU6050, integrated on an Adafruit breakout board. The IMU is 6-DOF meaning that we get information on 3 axes of acceleration and 3 axes of angular velocity. The IMU was powered by the RP2350 and communicated with it using I2C. It's important to have the IMU securely mounted & aligned with the fans motion ensure that the data we recieve is accurate to apply to the PID controller. 
+
+#figure(
+  image("figures/mpu6050.jpg", width: 75%),
+  caption: [Adafruit MPU6050 breakout board showing the sensor axes and pin labels. Source: #link("https://learn.adafruit.com/mpu6050-6-dof-accelerometer-and-gyro/pinouts")[Adafruit].],
+) <fig:imu>
 
 === Motor drive and electrical isolation
+
+Motors are high power and can introduce a lot of electrical noise to whatever system they are connected to. This is especially apparent at startup and large changes in speed. Noise can interfere with sensitive data lines, especially with sensors, and also cause damage to the RP2350's power line which can fry the RP2350. The best way to preven this is to electrically isolate the motor from the RP2350 and relevant peripherals. We did this by using two different power supplies, the RP2350 being powered off of our laptop and the motor being powered off of a 5V barrel jack power supply. 
+
+Despite the power isolation, the PWM signal from the RP2350 still had to reach the motor driver circuit which one may think would need to be an electrical connection. However, we used an optoisolator, a component which is able to convert electrical signal into light and transfer it to another electrical signal to the other side of the optoisolator. This communicated the PWm signal without unintentionally interfering with either side of the circuit.
+
+
+#figure(
+  image("figures/motor-drive.png", width: 100%),
+  caption: [Motor drive circuit with a 4N35 optoisolator, IRLB8721 MOSFET, and mechanical kill switch. Source: #link("https://vanhunteradams.com/Pico/Helicopter/MotorCircuit.html")[V. Hunter Adams].],
+) <fig:motor-drive>
+
 
 #figure(
   table(
@@ -140,6 +163,8 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
 )
 
 === Debugging 
+After implementing all three terms of the PID controller, we noticed that the motor would behave strangely if we tried to reach large changes in angle very quickly. It would start oscillating, with the motor turning on and off uncontrollably, and we would also lose I2C connection with the IMU. We realized that this was due to the fact that to reach this large change in angle, the PID controller would output a very large PWM duty cycle. This would typically be fine, but if the controller was not moving at all, i.e. PWM duty cycle of 0, the large change in duty cycle would cause the motor to draw a lot of current and fail. To address this, we artificially limited the maximum PWM duty cycle to 70% of what the maximum, to reduce the largest change in duty cycle that the controller could output.
+
 
 // ============================================================
 = Documentation
@@ -215,9 +240,13 @@ _How did you select the three PID gains?_
 == Question 2
 _What are the maximum and minimum angles that give stable behavior with your gains?_
 
+The minimum angle that we could stably hold was 15 degrees. This was due to the fact that our electrical connections were a bunch of solid core wires connected to screw terminals. These wires introduced some unwanted tension & pressure on the lever arm, preventing a full range of motion. The maximum angle that we could stably hold was 175 degrees. This was also limited by mechanical constraints since the screw attaching the lever arm to the hing would hit the wood plank at this angle preventing further motion.
+
 #todo([Parishee])
 == Question 3
 _What are the settling times at different angles?_
+The settling time from 0 to 120 degrees is 1.77 seconds. The settling time from 120 to 60 degrees is 3.87 seconds. The settling time from 60 to 90 degrees is 1.37 seconds. 
+
 
 
 // ============================================================
