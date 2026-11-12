@@ -176,6 +176,7 @@ The helicopter is a lever arm that hangs from a hinge, with the fan motor mounte
 // ============================================================
 #todo([Akmal])
 == Final Product
+Our finished 1D helicopter is a PCB lever arm hanging from a hinge on a wooden block, with a fan motor at the free end and an MPU6050 IMU near the hinge. The RP2350 reads the IMU, estimates the arm angle, and uses a PID controller to drive the motor so the arm holds whatever angle we choose. We set the target angle and the three gains from a serial terminal while the program runs, and the new values take effect right away. The final gains were $K_p = 20$, $K_i = 90$, and $K_d = 7$, and the program also starts with these values. A button on GPIO 15 runs the preset sequence of target angles asked for in the final/week 3 demo. The VGA display plots four live traces: gyro rate, accelerometer angle, filtered beam angle, and motor command. The top line of the screen also shows the current beam angle, target, and gains.
 #figure(
   // image("figures/final-product.jpeg", width: 100%),  // restore once the file exists
   placeholder("final-product.jpeg"),
@@ -184,6 +185,7 @@ The helicopter is a lever arm that hangs from a hinge, with the fan motor mounte
 
 #todo([Akmal])
 == Four-angle demo sequence
+The button runs a fixed test so we can observe how the controller handles steps both up and down. The program checks the button every 10 ms. While the button is held, the motor is forced off, the integral term is reset to zero, and the target is set to 0°, so the arm hangs straight down. When the button is released, a timer starts and the target changes on its own. It is 90° (horizontal) for the first 5 seconds, 120° (30° above horizontal) from 5 to 10 seconds, 60° (30° below horizontal) from 10 to 15 seconds, and then back to 90°, where it stays. The sequence uses whatever gains are set at the time. @fig:sequence is a VGA capture of one run. The yellow trace is the beam angle and the cyan trace is the motor command. The plots save one sample every 100 ms and the whole sequence fits on one screen. Because the motor command is capped at 70% duty, the cyan trace never goes above 70% of its plot height.
 #figure(
   // image("figures/vga-sequence.jpeg", width: 100%),  // restore once the file exists
   placeholder("vga-sequence.jpeg"),
@@ -209,9 +211,9 @@ The helicopter is a lever arm that hangs from a hinge, with the fan motor mounte
 = Lab Questions
 // ============================================================
 
-#todo([Akmal])
 == Question 1
 _How did you select the three PID gains?_
+We tuned the gains by hand, one term at a time, typing new values into the serial terminal while the arm was running so we could see the effect right away. We started with only proportional control, with $K_i$ and $K_d$ set to 0. We raised $K_p$ until the arm could lift off and get close to the target. With a low $K_p$ the arm sagged well below the target, and raising $K_p$ brought it closer but made it overshoot and swing back and forth. Next we added the derivative term to damp the motion. Our first version did not work: it used the raw gyro reading with the wrong sign, so instead of slowing the arm down it pushed it the same way it was already moving. The raw reading was also so large that even a small $K_d$ slammed the motor between off and full power whenever the arm moved. We fixed the sign and scaled the gyro reading down by $10^{-5}$ so that $K_d$ could be a normal-sized number. Last, we added the integral term to remove the steady-state error, since with P and D alone the arm settled a little below the target. The motor needs steady thrust to hold the arm up, and a P controller only gives thrust when there is some error. We stop the integral from growing while the motor is at its limit, so it cannot build up and cause a large overshoot later. We ended with $K_p = 20$, $K_i = 90$, and $K_d = 7$, because this set moved the arm to each new target quickly with little overshoot and stayed stable at every angle in the demo sequence.
 
 #todo([Parishee])
 == Question 2
