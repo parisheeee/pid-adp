@@ -311,8 +311,8 @@ If we were to implement this system again, we'd try to create better connections
   columns: (1fr, 1fr, 1fr, 1fr),
   inset: 6pt, align: center, stroke: 0.5pt,
   table.header[][*Additions*][*Deletions*][*Modifications*],
-  [*Suggested*], [#todo[]], [#todo[]], [#todo[]],
-  [*Accepted*], [#todo[]], [#todo[]], [#todo[]],
+  [*Suggested*], [], [], [],
+  [*Accepted*], [], [], [],
 )
 
 #prompt(2)[
