@@ -87,23 +87,60 @@
 #todo([Demetrios])
 == Software
 
+The program logic is split into a few separate sections. In this lab, CPU time is generally not important, as the time to read from the sensor and calculate the PWM motor command signal is relatively short. The VGA driver is handled on core 1, so it doesn't eat any cycles on core 0 which handles the interrupts. This handles plotting the gyro rates and motor command signals from a history array. The following sections detail the design of each of these components.
+
+
 === Angle estimation
+- Accel gives an absolute but noisy angle, theta_a = atan2(a_x, a_z) in the code; gyro (Y axis) gives a smooth rate that drifts when integrated. Say why neither alone is enough.
+- Introduce the equation below, define each symbol, and say it runs once per 1 ms ISR tick, so dt is about 1 ms.
+
+The angle estimation logic runs in the main PWM interrupt service routine, as it needs to be updated before the motor command signal is updated. Acceleration gives an angle which is absolute, but noisy. The gyroscope gives a smoother signal, but it drifts when integrated because the error component grows with time. The accelerometer alone would be too noisy, while the gyroscope alone would accumulate error from the absolute angle over time. To capture both signals without suffering drift or excessive noise, we use the following complementary filter:
 
 $ theta[k] = alpha (theta[k-1] + omega[k] d t) + (1 - alpha) theta_a[k], quad alpha = 0.98 $
 
+where:
+- $omega[k]$ is the gyro angular rate about the IMU Y axis.
+- $d t$ is the time between ISR ticks.
+- $theta_a[k]$ is the angle from the accelerometer alone, $"atan2"(a_x, a_z)$.
+- $alpha$ is the complementary filter weight on the gyro path (0.98).
+
+This calculation runs once per 1 ms ISR tick, so $d t$ is 1 ms. The time constant is roughly $ (alpha)/(1 - alpha)d t$ = 49 ms. The gyro term accurately tracks short term changes, while the accel term dominates at longer timescales. Higher values of alpha give a noisier angle measurement, and lower values result in drift accumulating longer. 
+
+We adopt the convention that the arm is at 0 degrees when hanging down, and 180 degrees when hanging up. To avoid edge cases in PWM calculations, we clamp the angle values to the non-negative bounds [0, 180]. The angle estimate is initialized at zero. Ideally, the system should be reset with the arm hanging straight down.   
+
+Raw values are stored as `fix15`, but the filter calculation is done by casting the values to a float and generating a floating point output. 
 
 === PID controller
+- Where it runs: in the 1 kHz PWM-wrap ISR. Walk through one tick in order: clear IRQ, read IMU, update filter, compute PID, write pwm_set_chan_level.
+- Introduce the equation below, with e = target minus measured angle. Explain the derivative is taken on the measurement (gyro rate), not the error, so a target step does not make a spike in the motor command.
+
+The PID controller also runs in the 1 kHz PWM-wrap ISR. The ISR clears the IRQ, reads from the IMU, and after calculating the complementary angle filter computes PID and `writes pwm_set_chan_level`. The PWM output is calculated by the following equation:
 
 $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
+- $K_{p, d, i}$ are user input parameters which correspond with the relative strength of the proportional, derivative, and integral terms respectively.
+- $e$ is the error term, which corresponds with the difference between the target angle and the current filtered angle. 
+- $dot(theta)$ is the angular velocity of the arm. This is a simple difference between the current and previous angles divided by the time constant $d t$.
 
+The output is clamped to 70% of the max duty cycle, because we found that in practice driving the motor any more causes it to sputter and die as it draws too much current. The output is also clamped to 0 -- the fan can only blow in one direction, and gravity always points downwards ensuring the entire space is reachable while only driving in one direction. 
+
+The integration term is implemented by accumulating the error term in a static variable. The integral accumulation also needs to be clamped: because it is time dependent, the integral term can grow without bound if the arm is stuck at a position below the target angle, or takes to long to reach the target angle. We clamp the integral term to `MAX_CONTROL` / $K_i$, so that it does not saturate the maximum PID control output.
 
 === Serial interface
+The user interface is handled with a protothread on core 0 so that its execution can be preempted by the ISR. The thread prompts the user for the target angle and constants, and the value is updated as soon as the value is received. If an empty message is received, the old value is kept. If an illegal value (not a number, outside range, etc.) the prompt is repeated.
 
 === VGA display
+- ISR keeps decimated circular buffers (one sample per 100 ticks, so 10 samples/s; the 530-pixel plot width then shows about 53 s of history) for gyro rate, accel angle, filtered angle, and motor PWM.
+- Draw thread runs on core 1 so it never delays the control loop. Describe the four plots, axis ranges, and the text line (angle, target, Kp, Ki, Kd).
+- The motor trace is the value actually written to the PWM hardware. The lab says it must look clean, so say what you did (e.g. the DLPF, decimation) and whether it needed more.
+- IMU-missing warning in red, and the retry thread that re-probes once per second and frees a stuck I2C bus.
+
+The ISR writes filtered beam angle and the PID control signal to a decimated / downsampled global buffer. The draw thread runs on core 1, so it never blocks the control or user interface loops. The x axis for both plots is the same ~50s time scale, and the plotted line scrolls across the screen with $t = 0$ on the right. The motor control plot is drawn from 0 to the max 4700 RPMs. The angle is plotted from 0 to 180 degrees. We also write the $K_p, K_d, K_i$ and target angle to the screen so it is easy to adjust parameters and see when the arm has stabilized. 
 
 === Demo sequence
+The demo sequence is implemented with a button between GPIO 15 and ground. A separate core 0 button thread polls the GPIO every 10 ms. While the button is held down, the control signal is 0 and the target angle is 0, allowing the arm to hang down at rest. 
 
-=== Noise and filtering
+When the button transitions from pressed to released, the `time_us_32` is measured. Every time the protothread is entered subsequently, the time from release is used to schedule the target angle according to the schedule in the lab handout (t = 0 $arrow$ 90 degrees, t = 5 $arrow$ 120 degrees, t = 10 $arrow$ 60 degrees, t = 15 $arrow$ 90 degrees). 
+
 
 == Selecting the PID gains
 
@@ -112,9 +149,10 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
     columns: (0.6fr, 0.6fr, 0.6fr, 3fr),
     inset: 6pt, align: (right, right, right, left), stroke: 0.5pt,
     table.header[*$K_p$*][*$K_i$*][*$K_d$*][*Observation*],
-    [#todo[]], [0], [0], [P only: ...],
-    [], [], [], [],
-    [20], [90], [7], [Final],
+    [10], [0], [0], [P only: As expected, the motor speed is 0 at an above the target. When moving the arm down from the target, the speed increases linearly],
+    [0], [10], [0], [D only: as expected, the motor tries to resist movement. If the arm is dropped, the fan spins to correct the motion],
+    [0], [0], [10], [I only: the motor slowly spins up when below the target, overshoots and then slowly spins down.],
+    [20], [9], [90], [This was our ideal parameter set. The fan quickly spins up to reach the target, slightly overshoots, and lowers to the target.],
   ),
   caption: [Tuning log.],
 ) <tab:tune>
@@ -127,7 +165,7 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
     columns: (1.4fr, 1.6fr, 1.4fr),
     inset: 6pt, align: left, stroke: 0.5pt,
     table.header[*Requirement*][*Test*][*Pass criterion*],
-    [IMU angle], [Move arm by hand, watch VGA], [Angle tracks arm; ~0 down, ~90 horizontal],
+    [IMU angle], [Move arm by hand, watch VGA], [Angle tracks arm: ~0 down, ~90 horizontal],
     [Motor open loop], [Fixed PWM duty], [Fan speed changes with duty],
     [Serial commands], [Enter target and gains at runtime], [Takes effect immediately, no reset],
     [Closed loop], [Set target to 90$degree$], [Arm rises and holds],
@@ -138,6 +176,16 @@ $ u = K_p e - K_d dot(theta) + K_i integral e thin d t $
   ),
   caption: [Verification tests.],
 )
+
+We tested the IMU measurements by plotting all the values to the screen and rotating the unmounted arm in all degrees of freedom, isolating different directions. 
+
+We tested the PID control and motor by configuring a PID value via the serial monitor, and testing different values. This is also how we discovered that the motor could draw too much current and die if the PID command signal was too high.
+
+Then, we tested closed loop control after adding each term. First we added proportional control, and found that the arm would oscillate below the target point, which was expected. Then, we added derivative control, which damped and then stopped the oscillation for higher values of D, although for higher values of D it would again oscillate. Still, the beam could not reach the target angle until we added integral control. 
+
+We did have intermittent issues with losing connection to the IMU, especially when drawing too much current from the motor. We mitigated this by capping the maximum motor command signal and also by printing the IMU connection state to the screen so it was obvious when we lost connection.
+
+
 
 === Debugging 
 
