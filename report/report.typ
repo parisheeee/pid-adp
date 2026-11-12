@@ -37,11 +37,11 @@
   #text(size: 20pt, weight: "bold")[PID Control of a 1D Helicopter]
   #v(0.6em)
   #text(size: 12pt)[
-    Demetrios Gavalas, Akmal Rupasingha #todo[other names]\
+    Demetrios Gavalas, Akmal Rupasingha, Parishee Bajaj]\
     Cornell University \
     ECE 5730 #todo[section/time] \u{00B7} #datetime.today().display("[month repr:long] [day], [year]")
   ]
-]
+\]
 
 #v(1em)
 #outline(indent: auto, depth: 2)
@@ -86,7 +86,6 @@ We measure the beam angle in degrees, with 0° when the arm hangs straight down,
   caption: [Pin assignments.],
 ) <tab:pins>
 
-#todo([Demetrios])
 == Software
 
 The program logic is split into a few separate sections. In this lab, CPU time is generally not important, as the time to read from the sensor and calculate the PWM motor command signal is relatively short. The VGA driver is handled on core 1, so it doesn't eat any cycles on core 0 which handles the interrupts. This handles plotting the gyro rates and motor command signals from a history array. The following sections detail the design of each of these components.
@@ -159,7 +158,6 @@ When the button transitions from pressed to released, the `time_us_32` is measur
   caption: [Tuning log.],
 ) <tab:tune>
 
-#todo([Demetrios])
 == Testing
 
 #figure(
@@ -203,13 +201,8 @@ We did have intermittent issues with losing connection to the IMU, especially wh
   caption: [Schematic of the motor drive, IMU, and user-interface circuits.],
 ) <fig:schematic>
 
-#todo([Demetrios])
 == Software System Diagram
-#figure(
-  // image("figures/software-diagram.png", width: 90%),  // restore once the file exists
-  placeholder("software-diagram.png"),
-  caption: [Software organization: 1 kHz PID ISR, serial/button/retry threads on core 0, VGA draw thread on core 1.],
-) <fig:flow>
+#include "figures/sw_diagram.typ"
 
 == Mechanical assembly
 The helicopter is a lever arm that hangs from a hinge, with the fan motor mounted at the free end. The hinge is screwed onto a wooden block, which holds the arm up so it can hang straight down and swing freely. The arm itself is a printed circuit board. The motor points so its thrust lifts the arm. The MPU6050 plugs into header pins on the PCB near the hinge. Its Y axis lines up with the hinge, which the angle code depends on.
@@ -320,3 +313,22 @@ Building and tuning the 1D helicopter ourselves gave us a much better understand
 #prompt(1)[#todo[Paste prompt.]]
 #reply[#todo[Paste or summarize reply.]]
 #ide-note[#todo[Which suggestions were accepted or edited.]]
+
+#prompt(2)[
+  can you make this a complementary accel / gyro filter? simple change
+
+  #ide-note[Selected in the IDE: the three `filtered_accel_*` low-pass lines in `imu_demo.c`.]
+]
+#reply[
+  I swapped the accel low-pass for a complementary filter in the ISR in `imu_demo.c`. I haven't built it or run it on the hardware.
+
+  - *Filter:* `beam_angle_deg = COMP_ALPHA * (beam_angle_deg + gyro_rate * dt) + (1 - COMP_ALPHA) * accel_angle`. I set `COMP_ALPHA` to 0.98.
+  - *Gyro axis:* the rate comes from `gyro[1]`, the same axis your Kd term already uses.
+  - *`dt`:* it is computed from `CLKDIV`, `WRAPVAL` and the system clock, so it follows the ISR period. That is about 1 ms if the Pico 2 runs at 150 MHz.
+  - *Raw accel in:* the filter uses the unfiltered accel for the angle, because the old 1/16 low-pass would add lag. `filtered_accel_*` is still computed, but only for the plots.
+  - *Start-up:* the angle starts at 0, which is the zeroed accel angle.
+  - *`GYRO_SIGN`:* I added this define, set to 1.0, because I could not check the gyro direction against `ANGLE_SIGN`. If the angle jumps the wrong way when you rotate the beam quickly, change it to -1.0f.
+
+  The IDE shows an "Unknown word" notice on `CLKDIV`, but it is defined a few lines below the new defines and is only used inside the ISR, so I do not expect a compile error.
+]
+#ide-note[Accepted as written. The change was a small edit to the angle estimation in the ISR.]
