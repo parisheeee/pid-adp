@@ -225,6 +225,8 @@ _What are the settling times at different angles?_
 // ============================================================
 = Conclusions
 // ============================================================
+#todo([feel free to add any concluding thoughts for what u found interesting i j added mine here hehe (＾▽＾) -ak])
+
 One of the most interesting parts of this lab was seeing what each PID term actually did to the arm. With only proportional control, the arm oscillated. The P term works like a spring: the farther the arm is from the target, the harder the motor pushes it back. But the P term doesn’t care how fast the arm is already moving, so the arm overshoots the target and swings back and forth. When we added the derivative term, the oscillation was greatly reduced. Our D term uses the gyro rate, so it pushes against the arm’s motion, a lot like friction. The faster the arm moves toward the target, the more the D term slows it down, so it settles instead of overshooting. Before this, we knew that D adds damping. Watching the arm go from swinging back and forth to settling in a smoother fashion made that idea much easier to understand.
 
 Building and tuning the 1D helicopter ourselves gave us a much better understanding for how a PID controller works. 
